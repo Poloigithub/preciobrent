@@ -1,0 +1,55 @@
+name: Brent Oil Price – Daily Update
+
+on:
+  schedule:
+    # 06:00 UTC = 07:00 CET (invierno) / 08:00 CEST (verano)
+    # GitHub Actions no admite zonas horarias en cron, así que usamos UTC.
+    - cron: '0 6 * * 1-5'   # lunes a viernes (mercados cerrados el fin de semana)
+  workflow_dispatch:         # permite lanzarlo manualmente desde la pestaña Actions
+
+permissions:
+  contents: write            # necesario para hacer commit + push de los archivos
+
+jobs:
+  update-price:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Usa el token con permisos de escritura para poder hacer push
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch price and generate chart
+        run: |
+          if [ -f brent_prices.csv ]; then
+            echo "CSV found → running update"
+            python brent_price.py update
+          else
+            echo "CSV not found → running full init"
+            python brent_price.py init
+          fi
+
+      - name: Commit and push changes
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add brent_prices.csv brent_chart.png
+          # Solo hace commit si hay cambios reales
+          if git diff --staged --quiet; then
+            echo "No changes to commit (holiday or data already up to date)."
+          else
+            DATE=$(date -u '+%Y-%m-%d')
+            git commit -m "chore: Brent price update ${DATE}"
+            git push
+          fi
