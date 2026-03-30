@@ -33,7 +33,7 @@ TIMEZONE = pytz.timezone("Europe/Madrid")
 CHART_TITLE = "Evolución del precio del barril de Brent"
 Y_LABEL = "Dólares estadounidenses (USD)"
 SOURCE_TEXT = "Fuente: Yahoo Finance"
-CHART_CREDIT = "Gráfico: @poloi.bsky.social"
+CHART_CREDIT = "Gráfico: @poloi.eurosky.social"
 
 
 # ---------------------------------------------------------------------------

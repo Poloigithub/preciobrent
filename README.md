@@ -67,4 +67,4 @@ También se puede lanzar manualmente desde **Actions → Run workflow**.
 ## Fuente de datos
 
 - Precios: [Yahoo Finance](https://finance.yahoo.com) — ticker `BZ=F` (Brent Crude Oil Futures)
-- Gráfico: [@poloi.bsky.social](https://bsky.app/profile/poloi.bsky.social)
+- Gráfico: [@poloi.eurosky.social](https://bsky.app/profile/poloi.eurosky.social)
