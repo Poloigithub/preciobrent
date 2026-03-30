@@ -32,7 +32,8 @@ TIMEZONE = pytz.timezone("Europe/Madrid")
 # Chart style constants
 CHART_TITLE = "Evolución del precio del barril de Brent"
 Y_LABEL = "Dólares estadounidenses (USD)"
-SOURCE_TEXT = "Fuente: Yahoo Finance, www.epdata.es"
+SOURCE_TEXT = "Fuente: Yahoo Finance"
+CHART_CREDIT = "Gráfico: @poloi.bsky.social"
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,11 @@ def generate_chart(df: pd.DataFrame) -> None:
     fig.text(
         0.99, 0.01, SOURCE_TEXT,
         ha="right", va="bottom", fontsize=8.5, color="#333333",
+        fontstyle="italic"
+    )
+    fig.text(
+        0.01, 0.01, CHART_CREDIT,
+        ha="left", va="bottom", fontsize=8.5, color="#333333",
         fontstyle="italic"
     )
 
