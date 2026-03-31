@@ -84,7 +84,8 @@ def generate_chart(df: pd.DataFrame) -> None:
     """Recreate the Brent price evolution chart and save it as PNG."""
     now_madrid = datetime.now(TIMEZONE)
     time_str = now_madrid.strftime("%H:%M")
-    subtitle = f"Último dato tomado a las {time_str} hora española"
+    last_price = df["USD"].iloc[-1]
+    subtitle = f"Último dato tomado a las {time_str} hora española · ${last_price:.2f}"
 
     fig, ax = plt.subplots(figsize=(13, 7))
     fig.patch.set_facecolor("white")
