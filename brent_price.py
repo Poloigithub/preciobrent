@@ -90,52 +90,112 @@ def fetch_latest_price() -> tuple[date, float]:
 # Chart generation
 # ---------------------------------------------------------------------------
 
+# Design tokens
+LINE_COLOR    = "#1565c0"   # deep blue line
+FILL_COLOR    = "#1565c0"   # same for fill
+DOT_COLOR     = "#1565c0"
+LABEL_BG      = "#1565c0"
+GRID_COLOR    = "#e8edf2"
+SPINE_COLOR   = "#d0d8e0"
+TICK_COLOR    = "#6b7c93"
+TITLE_COLOR   = "#0d1b2a"
+SUBTITLE_COLOR = "#1565c0"
+CREDIT_COLOR  = "#8a9bb0"
+BG_COLOR      = "#f8fafc"   # very subtle off-white background
+
+
 def generate_chart(df: pd.DataFrame) -> None:
     now_madrid = datetime.now(TIMEZONE)
-    time_str = now_madrid.strftime("%H:%M")
+    date_str  = now_madrid.strftime("%-d de %B de %Y").lower()
+    time_str  = now_madrid.strftime("%H:%M")
     last_price = df["USD"].iloc[-1]
-    subtitle = f"Último dato tomado a las {time_str} hora española · ${last_price:.2f}"
+    last_date  = df.index[-1]
+
+    subtitle = (
+        f"Último dato: {date_str} · {time_str} hora española · "
+        f"${last_price:.2f} / barril"
+    )
 
     fig, ax = plt.subplots(figsize=(13, 7))
     fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
+    ax.set_facecolor(BG_COLOR)
 
-    ax.plot(df.index, df["USD"], color="#555555", linewidth=0.9)
+    # Fill under the line
+    ax.fill_between(df.index, df["USD"],
+                    alpha=0.08, color=FILL_COLOR, linewidth=0)
 
-    ax.yaxis.grid(True, color="#cccccc", linewidth=0.7)
+    # Main line
+    ax.plot(df.index, df["USD"],
+            color=LINE_COLOR, linewidth=1.4, zorder=3)
+
+    # Dot at last price
+    ax.scatter([last_date], [last_price],
+               color=DOT_COLOR, s=55, zorder=5, linewidths=0)
+
+    # Price badge next to dot
+    ax.annotate(
+        f"  ${last_price:.2f}",
+        xy=(last_date, last_price),
+        xytext=(6, 0), textcoords="offset points",
+        fontsize=9.5, fontweight="bold", color=LABEL_BG,
+        va="center",
+    )
+
+    # Dashed horizontal line at current price
+    ax.axhline(last_price, color=LINE_COLOR, linewidth=0.6,
+               linestyle="--", alpha=0.35, zorder=1)
+
+    # Grid
+    ax.yaxis.grid(True, color=GRID_COLOR, linewidth=0.8)
     ax.xaxis.grid(False)
     ax.set_axisbelow(True)
 
+    # Spines
     for spine in ["top", "right", "left"]:
         ax.spines[spine].set_visible(False)
-    ax.spines["bottom"].set_color("#cccccc")
+    ax.spines["bottom"].set_color(SPINE_COLOR)
 
-    ax.tick_params(axis="both", which="both", length=0, labelsize=9, colors="#444444")
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}"))
+    # Ticks
+    ax.tick_params(axis="both", which="both", length=0,
+                   labelsize=9, colors=TICK_COLOR)
+    ax.yaxis.set_major_formatter(
+        mticker.FuncFormatter(lambda x, _: f"${int(x)}")
+    )
 
+    # X-axis: quarterly labels
     ax.xaxis.set_major_locator(matplotlib.dates.MonthLocator(bymonth=[1, 4, 7, 10]))
-    ax.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%-m/%d\n%Y"))
-    plt.setp(ax.get_xticklabels(), ha="center", fontsize=7.5)
+    ax.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%b\n%Y"))
+    plt.setp(ax.get_xticklabels(), ha="center", fontsize=8, color=TICK_COLOR)
 
-    ax.set_ylabel(Y_LABEL, fontsize=9, color="#444444", labelpad=6)
+    # Y-label
+    ax.set_ylabel(Y_LABEL, fontsize=9, color=TICK_COLOR, labelpad=8)
 
+    # Padding so the price badge doesn't get clipped
+    xmin, xmax = ax.get_xlim()
+    ax.set_xlim(xmin, xmax + (xmax - xmin) * 0.04)
+
+    # Titles
     fig.text(0.5, 0.97, CHART_TITLE,
-             ha="center", va="top", fontsize=15, fontweight="bold", color="#111111")
+             ha="center", va="top", fontsize=16,
+             fontweight="bold", color=TITLE_COLOR)
     fig.text(0.5, 0.92, subtitle,
-             ha="center", va="top", fontsize=11, color="#3399cc")
+             ha="center", va="top", fontsize=10.5, color=SUBTITLE_COLOR)
 
-    ax.plot([], [], color="#555555", linewidth=4, label="USD")
-    legend = ax.legend(loc="lower left", frameon=False, fontsize=9,
-                       handlelength=1.5, handleheight=0.8)
-    legend.get_texts()[0].set_color("#333333")
+    # Legend
+    ax.plot([], [], color=LINE_COLOR, linewidth=3, label="Brent USD/barril")
+    legend = ax.legend(loc="upper left", frameon=False, fontsize=9)
+    legend.get_texts()[0].set_color(TICK_COLOR)
 
+    # Credits
     fig.text(0.99, 0.01, SOURCE_TEXT,
-             ha="right", va="bottom", fontsize=8.5, color="#333333", fontstyle="italic")
+             ha="right", va="bottom", fontsize=8, color=CREDIT_COLOR,
+             fontstyle="italic")
     fig.text(0.01, 0.01, CHART_CREDIT,
-             ha="left", va="bottom", fontsize=8.5, color="#333333", fontstyle="italic")
+             ha="left", va="bottom", fontsize=8, color=CREDIT_COLOR,
+             fontstyle="italic")
 
-    plt.tight_layout(rect=[0, 0.02, 1, 0.91])
-    plt.savefig(CHART_FILE, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.tight_layout(rect=[0, 0.025, 1, 0.905])
+    plt.savefig(CHART_FILE, dpi=160, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     print(f"Chart saved → {CHART_FILE}")
 
