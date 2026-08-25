@@ -2,8 +2,7 @@
 """
 Brent crude oil price tracker.
 
-Data source: FRED (Federal Reserve Bank of St. Louis) series DCOILBRENTEU.
-Requires env var FRED_API_KEY (free at https://fredaccount.stlouisfed.org/).
+Data source: Yahoo Finance via yfinance (ticker BZ=F).
 
 Modes:
   init    Download full historical data and generate chart.
@@ -13,6 +12,7 @@ Modes:
 import argparse
 import os
 import sys
+import time
 from datetime import datetime, date
 
 import matplotlib
@@ -21,13 +21,12 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import pandas as pd
 import pytz
-import requests
+import yfinance as yf
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
-FRED_SERIES = "DCOILBRENTEU"   # Brent crude oil, USD/barrel, daily
+TICKER = "BZ=F"          # Brent crude futures on Yahoo Finance
 CSV_FILE = "brent_prices.csv"
 CHART_FILE = "brent_chart.png"
 TIMEZONE = pytz.timezone("Europe/Madrid")
@@ -43,33 +42,30 @@ CHART_CREDIT = "Gráfico: @poloi.eurosky.social"
 # Data helpers
 # ---------------------------------------------------------------------------
 
-def _api_key() -> str:
-    key = os.environ.get("FRED_API_KEY", "")
-    if not key:
-        raise RuntimeError("FRED_API_KEY environment variable not set.")
-    return key
-
-
-def _fred_get(params: dict) -> list[dict]:
-    """Call FRED and return the observations list."""
-    params.update({"api_key": _api_key(), "file_type": "json", "series_id": FRED_SERIES})
-    resp = requests.get(FRED_URL, params=params, timeout=30)
-    resp.raise_for_status()
-    return resp.json()["observations"]
+def _yf_download(ticker: yf.Ticker, **kwargs) -> pd.DataFrame:
+    """Call ticker.history() with up to 3 retries on rate-limit errors."""
+    for attempt in range(3):
+        try:
+            df = ticker.history(**kwargs)
+            if not df.empty:
+                return df
+        except Exception as exc:
+            if attempt == 2:
+                raise
+            wait = 10 * (attempt + 1)   # 10s, 20s
+            print(f"Attempt {attempt + 1} failed ({exc}). Retrying in {wait}s…")
+            time.sleep(wait)
+    raise RuntimeError("Yahoo Finance returned empty data after 3 attempts.")
 
 
 def fetch_history(start: str = "2019-01-01") -> pd.DataFrame:
-    """Download full daily closing price history from FRED."""
-    obs = _fred_get({"observation_start": start, "sort_order": "asc"})
-    records = [
-        (o["date"], float(o["value"]))
-        for o in obs
-        if o["value"] != "."   # FRED uses "." for missing values
-    ]
-    df = pd.DataFrame(records, columns=["Date", "USD"])
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.set_index("Date")
+    """Download daily closing prices from Yahoo Finance."""
+    ticker = yf.Ticker(TICKER)
+    df = _yf_download(ticker, start=start, auto_adjust=True)
+    df = df[["Close"]].copy()
+    df.index = pd.to_datetime(df.index).tz_localize(None)
     df.index.name = "Date"
+    df.rename(columns={"Close": "USD"}, inplace=True)
     return df
 
 
@@ -82,13 +78,12 @@ def save_csv(df: pd.DataFrame) -> None:
 
 
 def fetch_latest_price() -> tuple[date, float]:
-    """Return (date, price) for the most recent available trading day."""
-    obs = _fred_get({"sort_order": "desc", "limit": "10"})
-    for o in obs:
-        if o["value"] != ".":
-            last_date = datetime.strptime(o["date"], "%Y-%m-%d").date()
-            return last_date, round(float(o["value"]), 2)
-    raise RuntimeError("No valid price data found in FRED response.")
+    """Return (date, close_price) for the most recent available trading day."""
+    ticker = yf.Ticker(TICKER)
+    df = _yf_download(ticker, period="5d", auto_adjust=True)
+    df.index = pd.to_datetime(df.index).tz_localize(None)
+    last_date = df.index[-1].date()
+    return last_date, round(float(df["Close"].iloc[-1]), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +146,7 @@ def generate_chart(df: pd.DataFrame) -> None:
 
 def cmd_init(args) -> None:
     start = args.start if hasattr(args, "start") and args.start else "2019-01-01"
-    print(f"Downloading Brent price history from {start} (FRED)…")
+    print(f"Downloading Brent price history from {start} (Yahoo Finance)…")
     df = fetch_history(start=start)
     save_csv(df)
     print(f"CSV saved → {CSV_FILE}  ({len(df)} rows)")
