@@ -31,6 +31,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Fetch price and generate chart
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
           if [ -f brent_prices.csv ]; then
             echo "CSV found → running update"

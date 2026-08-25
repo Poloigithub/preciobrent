@@ -2,16 +2,18 @@
 """
 Brent crude oil price tracker.
 
+Data source: FRED (Federal Reserve Bank of St. Louis) series DCOILBRENTEU.
+Requires env var FRED_API_KEY (free at https://fredaccount.stlouisfed.org/).
+
 Modes:
   init    Download full historical data and generate chart.
   update  Append today's price to the CSV and regenerate chart (run daily at 7 AM).
 """
 
 import argparse
-import io
 import os
 import sys
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 
 import matplotlib
 matplotlib.use("Agg")
@@ -24,8 +26,8 @@ import requests
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-STOOQ_URL = "https://stooq.com/q/d/l/"
-TICKER = "bz.f"          # Brent crude futures on Stooq
+FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
+FRED_SERIES = "DCOILBRENTEU"   # Brent crude oil, USD/barrel, daily
 CSV_FILE = "brent_prices.csv"
 CHART_FILE = "brent_chart.png"
 TIMEZONE = pytz.timezone("Europe/Madrid")
@@ -41,44 +43,52 @@ CHART_CREDIT = "Gráfico: @poloi.eurosky.social"
 # Data helpers
 # ---------------------------------------------------------------------------
 
-def _fetch_stooq(start: str, end: str) -> pd.DataFrame:
-    """Fetch Brent daily OHLCV from Stooq CSV endpoint."""
-    params = {"s": TICKER, "d1": start.replace("-", ""), "d2": end.replace("-", ""), "i": "d"}
-    resp = requests.get(STOOQ_URL, params=params, timeout=30)
+def _api_key() -> str:
+    key = os.environ.get("FRED_API_KEY", "")
+    if not key:
+        raise RuntimeError("FRED_API_KEY environment variable not set.")
+    return key
+
+
+def _fred_get(params: dict) -> list[dict]:
+    """Call FRED and return the observations list."""
+    params.update({"api_key": _api_key(), "file_type": "json", "series_id": FRED_SERIES})
+    resp = requests.get(FRED_URL, params=params, timeout=30)
     resp.raise_for_status()
-    df = pd.read_csv(io.StringIO(resp.text), parse_dates=["Date"], index_col="Date")
-    if df.empty:
-        raise RuntimeError("Stooq returned empty data. Markets may be closed or ticker is wrong.")
-    df = df.sort_index()
-    return df
+    return resp.json()["observations"]
 
 
 def fetch_history(start: str = "2019-01-01") -> pd.DataFrame:
-    """Download full daily closing price history from Stooq."""
-    end = date.today().strftime("%Y-%m-%d")
-    df = _fetch_stooq(start, end)
-    df = df[["Close"]].rename(columns={"Close": "USD"})
+    """Download full daily closing price history from FRED."""
+    obs = _fred_get({"observation_start": start, "sort_order": "asc"})
+    records = [
+        (o["date"], float(o["value"]))
+        for o in obs
+        if o["value"] != "."   # FRED uses "." for missing values
+    ]
+    df = pd.DataFrame(records, columns=["Date", "USD"])
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.set_index("Date")
     df.index.name = "Date"
     return df
 
 
 def load_csv() -> pd.DataFrame:
-    """Load existing CSV into a DataFrame indexed by date."""
     return pd.read_csv(CSV_FILE, parse_dates=["Date"], index_col="Date")
 
 
 def save_csv(df: pd.DataFrame) -> None:
-    """Save DataFrame to CSV with Date and USD columns."""
     df.to_csv(CSV_FILE, date_format="%Y-%m-%d")
 
 
 def fetch_latest_price() -> tuple[date, float]:
-    """Return (date, close_price) for the most recent available trading day."""
-    end = date.today()
-    start = end - timedelta(days=7)  # look back a week to cover weekends/holidays
-    df = _fetch_stooq(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
-    last_date = df.index[-1].date()
-    return last_date, round(float(df["Close"].iloc[-1]), 2)
+    """Return (date, price) for the most recent available trading day."""
+    obs = _fred_get({"sort_order": "desc", "limit": "10"})
+    for o in obs:
+        if o["value"] != ".":
+            last_date = datetime.strptime(o["date"], "%Y-%m-%d").date()
+            return last_date, round(float(o["value"]), 2)
+    raise RuntimeError("No valid price data found in FRED response.")
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +96,6 @@ def fetch_latest_price() -> tuple[date, float]:
 # ---------------------------------------------------------------------------
 
 def generate_chart(df: pd.DataFrame) -> None:
-    """Recreate the Brent price evolution chart and save it as PNG."""
     now_madrid = datetime.now(TIMEZONE)
     time_str = now_madrid.strftime("%H:%M")
     last_price = df["USD"].iloc[-1]
@@ -142,7 +151,7 @@ def generate_chart(df: pd.DataFrame) -> None:
 
 def cmd_init(args) -> None:
     start = args.start if hasattr(args, "start") and args.start else "2019-01-01"
-    print(f"Downloading Brent price history from {start}…")
+    print(f"Downloading Brent price history from {start} (FRED)…")
     df = fetch_history(start=start)
     save_csv(df)
     print(f"CSV saved → {CSV_FILE}  ({len(df)} rows)")
