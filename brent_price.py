@@ -8,23 +8,22 @@ Modes:
 """
 
 import argparse
-import csv
 import os
 import sys
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import pandas as pd
+import pandas_datareader.data as web
 import pytz
-import yfinance as yf
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-TICKER = "BZ=F"          # Brent crude futures on Yahoo Finance
+TICKER = "BZ.F"          # Brent crude futures on Stooq
 CSV_FILE = "brent_prices.csv"
 CHART_FILE = "brent_chart.png"
 TIMEZONE = pytz.timezone("Europe/Madrid")
@@ -41,15 +40,14 @@ CHART_CREDIT = "Gráfico: @poloi.eurosky.social"
 # ---------------------------------------------------------------------------
 
 def fetch_history(start: str = "2019-01-01") -> pd.DataFrame:
-    """Download daily closing prices from Yahoo Finance."""
-    ticker = yf.Ticker(TICKER)
-    df = ticker.history(start=start, auto_adjust=True)
+    """Download daily closing prices from Stooq."""
+    df = web.DataReader(TICKER, "stooq", start=start)
     if df.empty:
-        raise RuntimeError("Yahoo Finance returned empty data. Check ticker or network.")
-    df = df[["Close"]].copy()
-    df.index = pd.to_datetime(df.index).tz_localize(None)  # strip tz for simplicity
+        raise RuntimeError("Stooq returned empty data. Check ticker or network.")
+    df = df.sort_index()  # Stooq returns newest-first
+    df = df[["Close"]].rename(columns={"Close": "USD"})
+    df.index = pd.to_datetime(df.index).tz_localize(None)
     df.index.name = "Date"
-    df.rename(columns={"Close": "USD"}, inplace=True)
     return df
 
 
@@ -66,14 +64,14 @@ def save_csv(df: pd.DataFrame) -> None:
 
 def fetch_latest_price() -> tuple[date, float]:
     """Return (date, close_price) for the most recent available trading day."""
-    ticker = yf.Ticker(TICKER)
-    # period="5d" ensures we get the last closed day even near weekends/holidays
-    df = ticker.history(period="5d", auto_adjust=True)
+    end = date.today()
+    start = end - timedelta(days=7)  # look back a week to cover weekends/holidays
+    df = web.DataReader(TICKER, "stooq", start=str(start), end=str(end))
     if df.empty:
-        raise RuntimeError("Could not fetch latest price from Yahoo Finance.")
-    last_row = df.iloc[-1]
-    last_date = pd.to_datetime(df.index[-1]).date()
-    return last_date, round(float(last_row["Close"]), 2)
+        raise RuntimeError("Could not fetch latest price from Stooq.")
+    df = df.sort_index()
+    last_date = df.index[-1].date()
+    return last_date, round(float(df["Close"].iloc[-1]), 2)
 
 
 # ---------------------------------------------------------------------------
