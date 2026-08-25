@@ -3,11 +3,12 @@
 Brent crude oil price tracker.
 
 Modes:
-  --init    Download full historical data and generate chart.
-  --update  Append today's price to the CSV and regenerate chart (run daily at 7 AM).
+  init    Download full historical data and generate chart.
+  update  Append today's price to the CSV and regenerate chart (run daily at 7 AM).
 """
 
 import argparse
+import io
 import os
 import sys
 from datetime import datetime, date, timedelta
@@ -17,13 +18,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import pandas as pd
-import pandas_datareader.data as web
 import pytz
+import requests
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-TICKER = "BZ.F"          # Brent crude futures on Stooq
+STOOQ_URL = "https://stooq.com/q/d/l/"
+TICKER = "bz.f"          # Brent crude futures on Stooq
 CSV_FILE = "brent_prices.csv"
 CHART_FILE = "brent_chart.png"
 TIMEZONE = pytz.timezone("Europe/Madrid")
@@ -39,22 +41,30 @@ CHART_CREDIT = "Gráfico: @poloi.eurosky.social"
 # Data helpers
 # ---------------------------------------------------------------------------
 
-def fetch_history(start: str = "2019-01-01") -> pd.DataFrame:
-    """Download daily closing prices from Stooq."""
-    df = web.DataReader(TICKER, "stooq", start=start)
+def _fetch_stooq(start: str, end: str) -> pd.DataFrame:
+    """Fetch Brent daily OHLCV from Stooq CSV endpoint."""
+    params = {"s": TICKER, "d1": start.replace("-", ""), "d2": end.replace("-", ""), "i": "d"}
+    resp = requests.get(STOOQ_URL, params=params, timeout=30)
+    resp.raise_for_status()
+    df = pd.read_csv(io.StringIO(resp.text), parse_dates=["Date"], index_col="Date")
     if df.empty:
-        raise RuntimeError("Stooq returned empty data. Check ticker or network.")
-    df = df.sort_index()  # Stooq returns newest-first
+        raise RuntimeError("Stooq returned empty data. Markets may be closed or ticker is wrong.")
+    df = df.sort_index()
+    return df
+
+
+def fetch_history(start: str = "2019-01-01") -> pd.DataFrame:
+    """Download full daily closing price history from Stooq."""
+    end = date.today().strftime("%Y-%m-%d")
+    df = _fetch_stooq(start, end)
     df = df[["Close"]].rename(columns={"Close": "USD"})
-    df.index = pd.to_datetime(df.index).tz_localize(None)
     df.index.name = "Date"
     return df
 
 
 def load_csv() -> pd.DataFrame:
     """Load existing CSV into a DataFrame indexed by date."""
-    df = pd.read_csv(CSV_FILE, parse_dates=["Date"], index_col="Date")
-    return df
+    return pd.read_csv(CSV_FILE, parse_dates=["Date"], index_col="Date")
 
 
 def save_csv(df: pd.DataFrame) -> None:
@@ -66,10 +76,7 @@ def fetch_latest_price() -> tuple[date, float]:
     """Return (date, close_price) for the most recent available trading day."""
     end = date.today()
     start = end - timedelta(days=7)  # look back a week to cover weekends/holidays
-    df = web.DataReader(TICKER, "stooq", start=str(start), end=str(end))
-    if df.empty:
-        raise RuntimeError("Could not fetch latest price from Stooq.")
-    df = df.sort_index()
+    df = _fetch_stooq(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
     last_date = df.index[-1].date()
     return last_date, round(float(df["Close"].iloc[-1]), 2)
 
@@ -89,61 +96,40 @@ def generate_chart(df: pd.DataFrame) -> None:
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
-    # Plot line
     ax.plot(df.index, df["USD"], color="#555555", linewidth=0.9)
 
-    # Grid – horizontal only, light gray
     ax.yaxis.grid(True, color="#cccccc", linewidth=0.7)
     ax.xaxis.grid(False)
     ax.set_axisbelow(True)
 
-    # Remove spines except bottom
     for spine in ["top", "right", "left"]:
         ax.spines[spine].set_visible(False)
     ax.spines["bottom"].set_color("#cccccc")
 
-    # Ticks
     ax.tick_params(axis="both", which="both", length=0, labelsize=9, colors="#444444")
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}"))
 
-    # X-axis: show one label per quarter (approx every 3 months)
     ax.xaxis.set_major_locator(matplotlib.dates.MonthLocator(bymonth=[1, 4, 7, 10]))
     ax.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%-m/%d\n%Y"))
     plt.setp(ax.get_xticklabels(), ha="center", fontsize=7.5)
 
-    # Labels
     ax.set_ylabel(Y_LABEL, fontsize=9, color="#444444", labelpad=6)
 
-    # Titles
-    fig.text(
-        0.5, 0.97, CHART_TITLE,
-        ha="center", va="top", fontsize=15, fontweight="bold", color="#111111"
-    )
-    fig.text(
-        0.5, 0.92, subtitle,
-        ha="center", va="top", fontsize=11, color="#3399cc"
-    )
+    fig.text(0.5, 0.97, CHART_TITLE,
+             ha="center", va="top", fontsize=15, fontweight="bold", color="#111111")
+    fig.text(0.5, 0.92, subtitle,
+             ha="center", va="top", fontsize=11, color="#3399cc")
 
-    # Legend / source
     ax.plot([], [], color="#555555", linewidth=4, label="USD")
-    legend = ax.legend(
-        loc="lower left", frameon=False, fontsize=9,
-        handlelength=1.5, handleheight=0.8
-    )
+    legend = ax.legend(loc="lower left", frameon=False, fontsize=9,
+                       handlelength=1.5, handleheight=0.8)
     legend.get_texts()[0].set_color("#333333")
 
-    fig.text(
-        0.99, 0.01, SOURCE_TEXT,
-        ha="right", va="bottom", fontsize=8.5, color="#333333",
-        fontstyle="italic"
-    )
-    fig.text(
-        0.01, 0.01, CHART_CREDIT,
-        ha="left", va="bottom", fontsize=8.5, color="#333333",
-        fontstyle="italic"
-    )
+    fig.text(0.99, 0.01, SOURCE_TEXT,
+             ha="right", va="bottom", fontsize=8.5, color="#333333", fontstyle="italic")
+    fig.text(0.01, 0.01, CHART_CREDIT,
+             ha="left", va="bottom", fontsize=8.5, color="#333333", fontstyle="italic")
 
-    # Layout
     plt.tight_layout(rect=[0, 0.02, 1, 0.91])
     plt.savefig(CHART_FILE, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -155,7 +141,6 @@ def generate_chart(df: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 
 def cmd_init(args) -> None:
-    """Download full history, save CSV, generate chart."""
     start = args.start if hasattr(args, "start") and args.start else "2019-01-01"
     print(f"Downloading Brent price history from {start}…")
     df = fetch_history(start=start)
@@ -165,9 +150,8 @@ def cmd_init(args) -> None:
 
 
 def cmd_update(args) -> None:
-    """Append today's price (if new) to the CSV and regenerate chart."""
     if not os.path.exists(CSV_FILE):
-        print(f"CSV not found ({CSV_FILE}). Run with --init first.", file=sys.stderr)
+        print(f"CSV not found ({CSV_FILE}). Run with init first.", file=sys.stderr)
         sys.exit(1)
 
     df = load_csv()
@@ -175,7 +159,6 @@ def cmd_update(args) -> None:
     today_ts = pd.Timestamp(today)
 
     if today_ts in df.index:
-        # Update value in case it changed during the day
         df.loc[today_ts, "USD"] = price
         print(f"Updated existing entry: {today} → ${price}")
     else:
@@ -194,16 +177,12 @@ def cmd_update(args) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Brent oil price tracker – fetch, store, and chart."
-    )
+    parser = argparse.ArgumentParser(description="Brent oil price tracker.")
     sub = parser.add_subparsers(dest="command")
 
     p_init = sub.add_parser("init", help="Download full history and generate chart.")
-    p_init.add_argument(
-        "--start", default="2019-01-01",
-        help="Start date for historical download (YYYY-MM-DD). Default: 2019-01-01"
-    )
+    p_init.add_argument("--start", default="2019-01-01",
+                        help="Start date (YYYY-MM-DD). Default: 2019-01-01")
     p_init.set_defaults(func=cmd_init)
 
     p_update = sub.add_parser("update", help="Append today's price and regenerate chart.")
